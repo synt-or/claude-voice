@@ -54,7 +54,7 @@ replace = 'if True:'
 [[rule]]
 name = "from the internet, only allowed addresses get past the gate"
 file = "src/claude_voice/gate.py"
-find = 'if not self.admits\(address\):'
+find = 'if not self.admits\(address, scope\["path"\]\):'
 replace = 'if False:'
 
 [[rule]]
@@ -68,3 +68,9 @@ name = "behind a tunnel, a request without the tunnel's header is a stranger"
 file = "src/claude_voice/gate.py"
 find = 'return \(ip.is_loopback and not self.header\) or any\(ip in net for net in self.allowed\)'
 replace = 'return ip.is_loopback or any(ip in net for net in self.allowed)'
+
+[[rule]]
+name = "the sign-in pages open only to the owner's own networks, when they are named"
+file = "src/claude_voice/gate.py"
+find = 'return not self.sign_in or any\(ip in net for net in self.sign_in\)'
+replace = 'return True'

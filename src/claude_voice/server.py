@@ -71,6 +71,7 @@ class Config:
     courier_name: str = transcripts.COURIER_NAME
     allowed_ips: list[str] = field(default_factory=list)
     client_ip_header: str | None = None
+    sign_in_ips: list[str] = field(default_factory=list)
     redirect_hosts: list[str] | None = None
     static_bearer: bool = True
 
@@ -104,6 +105,7 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
     )
     cfg.allowed_ips = _split(env.get("CLAUDE_VOICE_ALLOWED_IPS", ""))
     cfg.client_ip_header = env.get("CLAUDE_VOICE_CLIENT_IP_HEADER", "").strip() or None
+    cfg.sign_in_ips = _split(env.get("CLAUDE_VOICE_SIGN_IN_IPS", ""))
     cfg.redirect_hosts = _split(env.get("CLAUDE_VOICE_REDIRECT_HOSTS", "")) or None
     cfg.static_bearer = env.get("CLAUDE_VOICE_STATIC_BEARER", "1") != "0"
     cfg.courier_name = env.get("CLAUDE_VOICE_COURIER_NAME", "").strip() or transcripts.COURIER_NAME
@@ -918,6 +920,7 @@ def build_app(
     public_hosts: list[str] | None = None,
     allowed_ips: list[str] | None = None,
     client_ip_header: str | None = None,
+    sign_in_ips: list[str] | None = None,
 ) -> ASGIApp:
     """HTTP app. Auth (OAuth plus the static token) comes from the server's provider."""
     from starlette.responses import PlainTextResponse
@@ -933,7 +936,7 @@ def build_app(
         allowed_origins=[f"https://{h}" for h in public_hosts or []] + ["http://127.0.0.1:*", "http://localhost:*"],
     )
     app = PublicClientMetadata(server.streamable_http_app(transport_security=security))
-    return AddressGate(app, allowed_ips or [], client_ip_header) if allowed_ips else app
+    return AddressGate(app, allowed_ips or [], client_ip_header, sign_in_ips) if allowed_ips else app
 
 
 def serve_forever(cfg: Config) -> None:
@@ -963,6 +966,7 @@ def serve_forever(cfg: Config) -> None:
         cfg.public_hosts,
         cfg.allowed_ips,
         cfg.client_ip_header,
+        cfg.sign_in_ips,
     )
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
     uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info")

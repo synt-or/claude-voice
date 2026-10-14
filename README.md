@@ -170,6 +170,7 @@ also the default.
 | `CLAUDE_VOICE_DB` | `~/.local/state/claude-voice/bridge.db` | where sessions and events are kept |
 | `CLAUDE_VOICE_ALLOWED_IPS` | — | comma-separated networks allowed in from outside, e.g. Anthropic's `160.79.104.0/21`; empty lets every address through |
 | `CLAUDE_VOICE_CLIENT_IP_HEADER` | — | the header the tunnel puts the caller's address in, e.g. `X-Forwarded-For`; only its last value is trusted |
+| `CLAUDE_VOICE_SIGN_IN_IPS` | — | comma-separated networks the owner's browser signs in from, e.g. the tailnet `100.64.0.0/10,fd7a:115c:a1e0::/48`; empty opens the sign-in pages to every address |
 | `CLAUDE_VOICE_REDIRECT_HOSTS` | — | comma-separated hosts an app may be sent back to after signing in, e.g. `claude.ai,claude.com` |
 | `CLAUDE_VOICE_STATIC_BEARER` | `1` | `0` stops the login secret from working as a bearer token, so only signed-in apps get in |
 
