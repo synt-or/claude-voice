@@ -26,9 +26,19 @@ async def test_a_caller_cannot_forge_its_way_in():
         assert r.status_code == 403
 
 
-async def test_health_stays_open_and_local_tools_pass():
+async def test_health_stays_open():
     async with app([ANTHROPIC]) as http:
         assert (await http.get("/healthz", headers={"x-forwarded-for": "203.0.113.9"})).status_code == 200
+
+
+async def test_behind_a_tunnel_a_request_without_the_tunnel_s_header_is_a_stranger():
+    async with app([ANTHROPIC]) as http:
+        assert (await http.get("/mcp")).status_code == 403
+        assert (await http.get("/mcp", headers={"x-forwarded-for": "127.0.0.1"})).status_code == 403
+
+
+async def test_without_a_tunnel_local_tools_pass():
+    async with app([ANTHROPIC], header=None) as http:
         assert (await http.get("/mcp")).status_code == 200
 
 

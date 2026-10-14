@@ -36,7 +36,9 @@ class AddressGate:
             ip = ipaddress.ip_address(address)
         except ValueError:
             return False
-        return ip.is_loopback or any(ip in net for net in self.allowed)
+        # Behind a tunnel every connection is local, so loopback proves nothing there.
+        # RULE: behind a tunnel, a request without the tunnel's header is a stranger
+        return (ip.is_loopback and not self.header) or any(ip in net for net in self.allowed)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not self.allowed or scope["path"] in OPEN_PATHS:

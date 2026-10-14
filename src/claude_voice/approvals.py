@@ -24,7 +24,7 @@ PATH_KEYS = ("file_path", "path", "notebook_path")
 DEFAULT_TIMEOUT_SECONDS = 600.0
 
 
-def _inside(tool_input: dict[str, Any], project: str | Path | None) -> bool:
+def _inside(tool: str, tool_input: dict[str, Any], project: str | Path | None) -> bool:
     """Whether every path the tool would touch lies in the project (no path: the project itself)."""
     if project is None:
         return True
@@ -37,6 +37,9 @@ def _inside(tool_input: dict[str, Any], project: str | Path | None) -> bool:
         path = (path if path.is_absolute() else base / path).resolve()
         if path != base and base not in path.parents:
             return False
+    if tool == "Glob":
+        pattern = str(tool_input.get("pattern", ""))
+        return not (pattern.startswith(("/", "~")) or ".." in pattern)
     return True
 
 
@@ -62,7 +65,7 @@ class ApprovalBroker:
             tool: str, tool_input: dict[str, Any], context: ToolPermissionContext
         ) -> PermissionResultAllow | PermissionResultDeny:
             # RULE: reading passes unasked only inside the session's own project
-            if tool in self.auto_allow and _inside(tool_input, project):
+            if tool in self.auto_allow and _inside(tool, tool_input, project):
                 return PermissionResultAllow()
             return await self._ask(session_id, tool, tool_input, context)
 

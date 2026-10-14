@@ -174,6 +174,7 @@ async def test_reading_passes_unasked_only_inside_the_session_s_own_project(stor
             ask("Read", {"file_path": "../../.ssh/id_ed25519"}, outcomes),
             ask("Grep", {"pattern": "x", "path": "/etc"}, outcomes),
             ask("Glob", {"pattern": "**/*.py"}, outcomes),
+            ask("Glob", {"pattern": "/Users/someone/.ssh/*"}, outcomes),
             result("ok", "c"),
         ],
     )
@@ -186,8 +187,12 @@ async def test_reading_passes_unasked_only_inside_the_session_s_own_project(stor
     [req] = await until_pending(broker)
     assert req["tool"] == "Grep"
     broker.deny(req["id"])
+    [req] = await until_pending(broker)
+    assert req["tool"] == "Glob"
+    broker.deny(req["id"])
     await m.wait(s["id"])
 
     assert isinstance(outcomes[0], PermissionResultDeny)
     assert isinstance(outcomes[1], PermissionResultDeny)
     assert isinstance(outcomes[2], PermissionResultAllow)
+    assert isinstance(outcomes[3], PermissionResultDeny)

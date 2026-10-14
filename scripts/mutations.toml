@@ -42,7 +42,7 @@ replace = 'if False:'
 [[rule]]
 name = "reading passes unasked only inside the session's own project"
 file = "src/claude_voice/approvals.py"
-find = 'if tool in self.auto_allow and _inside\(tool_input, project\):'
+find = 'if tool in self.auto_allow and _inside\(tool, tool_input, project\):'
 replace = 'if tool in self.auto_allow:'
 
 [[rule]]
@@ -62,3 +62,9 @@ name = "a conversation id is never a path"
 file = "src/claude_voice/server.py"
 find = 'if not SESSION_ID_RE.fullmatch\(claude_session_id\):'
 replace = 'if False:'
+
+[[rule]]
+name = "behind a tunnel, a request without the tunnel's header is a stranger"
+file = "src/claude_voice/gate.py"
+find = 'return \(ip.is_loopback and not self.header\) or any\(ip in net for net in self.allowed\)'
+replace = 'return ip.is_loopback or any(ip in net for net in self.allowed)'
