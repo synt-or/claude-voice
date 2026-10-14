@@ -272,3 +272,11 @@ async def test_tokens_survive_restart_and_are_stored_hashed(tmp_path, clock):
     raw = path.read_bytes()
     assert issued.access_token.encode() not in raw
     assert issued.refresh_token.encode() not in raw
+
+
+async def test_the_sign_in_page_cannot_be_framed(bridge):
+    client_id = await register(bridge)
+    _, challenge = pkce()
+    url = await start_authorize(bridge, client_id, challenge)
+    r = await bridge.get(url)
+    assert r.headers["x-frame-options"] == "DENY"

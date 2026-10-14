@@ -109,7 +109,7 @@ then give it a public address.
   - Anything Claude Code would normally ask you about becomes a pending approval
     with a short number you can say aloud, such as "approval 3: Bash,
     `rm -rf build`".
-  - Reading files needs no approval.
+  - Reading files inside the session's project needs no approval.
   - A request nobody answers is refused after ten minutes.
 - **A session open in a terminal is never taken over.**
   - Messages are delivered into it, the way one Claude Code session messages
@@ -168,6 +168,10 @@ also the default.
 | `CLAUDE_VOICE_HOST` / `_PORT` | `127.0.0.1` / `8811` | keep it on this computer and tunnel in |
 | `CLAUDE_VOICE_COURIER_NAME` | `Owner via claude-voice` | the sender name a session sees when the voice messages it, e.g. `Roy via stemmen` |
 | `CLAUDE_VOICE_DB` | `~/.local/state/claude-voice/bridge.db` | where sessions and events are kept |
+| `CLAUDE_VOICE_ALLOWED_IPS` | — | comma-separated networks allowed in from outside, e.g. Anthropic's `160.79.104.0/21`; empty lets every address through |
+| `CLAUDE_VOICE_CLIENT_IP_HEADER` | — | the header the tunnel puts the caller's address in, e.g. `X-Forwarded-For`; only its last value is trusted |
+| `CLAUDE_VOICE_REDIRECT_HOSTS` | — | comma-separated hosts an app may be sent back to after signing in, e.g. `claude.ai,claude.com` |
+| `CLAUDE_VOICE_STATIC_BEARER` | `1` | `0` stops the login secret from working as a bearer token, so only signed-in apps get in |
 
 ### Signing in
 
@@ -181,6 +185,15 @@ the bridge. You type the login secret there once.
 - Access tokens last an hour.
 - Refresh tokens last 90 days and are replaced each time they are used.
 - Tokens are stored only as hashes.
+- Changing the login secret signs every app out. So does `revoke-all`:
+
+```console
+$ CLAUDE_VOICE_DB=$(mktemp -d)/bridge.db claude-voice revoke-all
+claude-voice: 0 tokens revoked; every app must sign in again
+```
+
+Reading files needs no approval only inside the session's own project; reading
+anywhere else waits for a yes like any other risky action.
 
 ## Run it as a service and reach it from the phone
 

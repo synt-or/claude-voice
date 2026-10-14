@@ -38,3 +38,27 @@ name = "only a session the bridge started itself is ever stopped"
 file = "src/claude_voice/server.py"
 find = 'if not store.was_started\(sid\):'
 replace = 'if False:'
+
+[[rule]]
+name = "reading passes unasked only inside the session's own project"
+file = "src/claude_voice/approvals.py"
+find = 'if tool in self.auto_allow and _inside\(tool_input, project\):'
+replace = 'if tool in self.auto_allow:'
+
+[[rule]]
+name = "a new login secret signs everyone out"
+file = "src/claude_voice/oauth.py"
+find = 'if row is not None and row\[0\] == digest:'
+replace = 'if True:'
+
+[[rule]]
+name = "from the internet, only allowed addresses get past the gate"
+file = "src/claude_voice/gate.py"
+find = 'if not self.admits\(address\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a conversation id is never a path"
+file = "src/claude_voice/server.py"
+find = 'if not SESSION_ID_RE.fullmatch\(claude_session_id\):'
+replace = 'if False:'

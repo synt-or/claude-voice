@@ -16,7 +16,7 @@ from .server import Config, ConfigError, load_config, serve_forever
 
 #: Every verb this command has. The documentation test requires each one to
 #: appear in a worked example, so a verb cannot be added without one.
-COMMANDS: tuple[str, ...] = ("serve", "check")
+COMMANDS: tuple[str, ...] = ("serve", "check", "revoke-all")
 
 SIGN_IN = (
     "Run `claude`, type /login and sign in with your Claude account, then check again. If `claude` "
@@ -113,7 +113,17 @@ def main(
         p.add_argument("--transport", choices=["stdio", "http"], default="stdio")
         if name == "check":
             p.add_argument("--json", action="store_true", help="answer in JSON, for an assistant doing the setup")
+    sub.add_parser("revoke-all", help="sign every connected app out; they must sign in again")
     parsed = parser.parse_args(args)
+
+    if parsed.command == "revoke-all":
+        from .oauth import revoke_all
+        from .store import Store
+
+        db = Path(env.get("CLAUDE_VOICE_DB", "~/.local/state/claude-voice/bridge.db")).expanduser()
+        n = revoke_all(Store(db).db)
+        sys.stdout.write(f"claude-voice: {n} tokens revoked; every app must sign in again\n")
+        return 0
 
     if parsed.command == "check":
         cfg, found = checks(env, parsed.transport, login)

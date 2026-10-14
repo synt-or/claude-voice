@@ -162,3 +162,32 @@ async def test_pending_can_be_filtered_by_session(store, root):
         broker.approve(r["id"])
     await m.wait(a["id"])
     await m.wait(b["id"])
+
+
+async def test_reading_passes_unasked_only_inside_the_session_s_own_project(store, root):
+    outcomes = []
+    m, broker = setup(
+        store,
+        root,
+        [
+            init("c"),
+            ask("Read", {"file_path": "../../.ssh/id_ed25519"}, outcomes),
+            ask("Grep", {"pattern": "x", "path": "/etc"}, outcomes),
+            ask("Glob", {"pattern": "**/*.py"}, outcomes),
+            result("ok", "c"),
+        ],
+    )
+    s = m.create("app")
+    await m.send(s["id"], "look")
+
+    [req] = await until_pending(broker)
+    assert req["tool"] == "Read"
+    broker.deny(req["id"])
+    [req] = await until_pending(broker)
+    assert req["tool"] == "Grep"
+    broker.deny(req["id"])
+    await m.wait(s["id"])
+
+    assert isinstance(outcomes[0], PermissionResultDeny)
+    assert isinstance(outcomes[1], PermissionResultDeny)
+    assert isinstance(outcomes[2], PermissionResultAllow)

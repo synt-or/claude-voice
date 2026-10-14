@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -25,6 +26,7 @@ from starlette.types import ASGIApp
 
 from . import events, metrics, transcripts
 from .approvals import ApprovalBroker, ApprovalNotFound
+from .gate import AddressGate
 from .metrics import METRICS
 from .oauth import SCOPE, OAuthProvider, PublicClientMetadata
 from .sessions import SessionBusy, SessionClosed, SessionManager
@@ -32,6 +34,7 @@ from .store import SessionNotFound, Store
 from .tree import PROJECTS_DIR, SessionTree
 
 MIN_TOKEN_CHARS = 32
+SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 COURIER_PREFIX = "claude-voice-msg-"
 # Claude Code keeps one JSON file per running session here.
@@ -66,6 +69,10 @@ class Config:
     public_hosts: list[str] = field(default_factory=list)
     public_url: str = ""
     courier_name: str = transcripts.COURIER_NAME
+    allowed_ips: list[str] = field(default_factory=list)
+    client_ip_header: str | None = None
+    redirect_hosts: list[str] | None = None
+    static_bearer: bool = True
 
 
 MAKE_TOKEN = (
@@ -95,6 +102,10 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
         token=env.get("CLAUDE_VOICE_TOKEN"),
         public_hosts=[h for h in env.get("CLAUDE_VOICE_PUBLIC_HOSTS", "").split(",") if h],
     )
+    cfg.allowed_ips = _split(env.get("CLAUDE_VOICE_ALLOWED_IPS", ""))
+    cfg.client_ip_header = env.get("CLAUDE_VOICE_CLIENT_IP_HEADER", "").strip() or None
+    cfg.redirect_hosts = _split(env.get("CLAUDE_VOICE_REDIRECT_HOSTS", "")) or None
+    cfg.static_bearer = env.get("CLAUDE_VOICE_STATIC_BEARER", "1") != "0"
     cfg.courier_name = env.get("CLAUDE_VOICE_COURIER_NAME", "").strip() or transcripts.COURIER_NAME
     cfg.public_url = env.get("CLAUDE_VOICE_PUBLIC_URL", "").rstrip("/") or (
         f"https://{cfg.public_hosts[0]}" if cfg.public_hosts else f"http://127.0.0.1:{cfg.port}"
@@ -105,6 +116,10 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
         if len(cfg.token) < MIN_TOKEN_CHARS:
             raise ConfigError(f"CLAUDE_VOICE_TOKEN must be at least {MIN_TOKEN_CHARS} characters. {MAKE_TOKEN}")
     return cfg
+
+
+def _split(value: str) -> list[str]:
+    return [v.strip() for v in value.split(",") if v.strip()]
 
 
 log = logging.getLogger("claude_voice")
@@ -558,6 +573,9 @@ def build_server(
     ) -> dict[str, Any]:
         """Continue an existing Claude Code conversation (from list_claude_conversations).
         If it is still open in a terminal, both copies will carry on separately."""
+        # RULE: a conversation id is never a path
+        if not SESSION_ID_RE.fullmatch(claude_session_id):
+            raise ToolError(f"Not a Claude Code conversation id: {claude_session_id}")
         if project is None:
             live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
             match = None
@@ -895,7 +913,12 @@ def build_server(
     return mcp
 
 
-def build_app(server: MCPServer, public_hosts: list[str] | None = None) -> ASGIApp:
+def build_app(
+    server: MCPServer,
+    public_hosts: list[str] | None = None,
+    allowed_ips: list[str] | None = None,
+    client_ip_header: str | None = None,
+) -> ASGIApp:
     """HTTP app. Auth (OAuth plus the static token) comes from the server's provider."""
     from starlette.responses import PlainTextResponse
 
@@ -909,7 +932,8 @@ def build_app(server: MCPServer, public_hosts: list[str] | None = None) -> ASGIA
         allowed_hosts=hosts,
         allowed_origins=[f"https://{h}" for h in public_hosts or []] + ["http://127.0.0.1:*", "http://localhost:*"],
     )
-    return PublicClientMetadata(server.streamable_http_app(transport_security=security))
+    app = PublicClientMetadata(server.streamable_http_app(transport_security=security))
+    return AddressGate(app, allowed_ips or [], client_ip_header) if allowed_ips else app
 
 
 def serve_forever(cfg: Config) -> None:
@@ -926,8 +950,19 @@ def serve_forever(cfg: Config) -> None:
     token = cfg.token or ""
     # The token doubles as the login secret on the OAuth consent page and as a
     # static bearer token for local MCP clients.
-    oauth = OAuthProvider(store, login_secret=token, public_url=cfg.public_url, static_token=token)
+    oauth = OAuthProvider(
+        store,
+        login_secret=token,
+        public_url=cfg.public_url,
+        static_token=token if cfg.static_bearer else None,
+        redirect_hosts=cfg.redirect_hosts,
+    )
     restart = metrics.restart_info("~/.local/state/claude-voice/restarts")
-    app = build_app(build_server(manager, oauth=oauth, watch_interval=5.0, restart=restart), cfg.public_hosts)
+    app = build_app(
+        build_server(manager, oauth=oauth, watch_interval=5.0, restart=restart),
+        cfg.public_hosts,
+        cfg.allowed_ips,
+        cfg.client_ip_header,
+    )
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
     uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info")

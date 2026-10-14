@@ -429,3 +429,13 @@ def test_the_courier_name_comes_from_the_environment(tmp_path):
     assert load_config(env, "stdio").courier_name == "Owner via claude-voice"
     named = {**env, "CLAUDE_VOICE_COURIER_NAME": "Roy via stemmen"}
     assert load_config(named, "stdio").courier_name == "Roy via stemmen"
+
+
+async def test_a_conversation_id_is_never_a_path(tmp_path, root):
+    (root / "app").mkdir(exist_ok=True)
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
+    async with Client(build_server(m, conversations=FakeConversations([]))) as client:
+        bad = await client.call_tool(
+            "attach_conversation", {"claude_session_id": "../-Users-someone-else/abc", "project": "app"}
+        )
+    assert bad.is_error and "not a claude code conversation id" in bad.content[0].text.lower()

@@ -169,7 +169,7 @@ class SessionManager:
             settings=json.dumps({"disableClaudeAiConnectors": True}),
         )
         if self.approvals is not None:
-            opts.can_use_tool = self.approvals.callback(session_id)
+            opts.can_use_tool = self.approvals.callback(session_id, s["project_path"])
         return opts
 
     async def _run(self, session_id: str, prompt: str) -> None:

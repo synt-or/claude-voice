@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
@@ -19,7 +20,24 @@ from .sessions import brief
 from .store import Store
 
 READ_ONLY_TOOLS = frozenset({"Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite"})
+PATH_KEYS = ("file_path", "path", "notebook_path")
 DEFAULT_TIMEOUT_SECONDS = 600.0
+
+
+def _inside(tool_input: dict[str, Any], project: str | Path | None) -> bool:
+    """Whether every path the tool would touch lies in the project (no path: the project itself)."""
+    if project is None:
+        return True
+    base = Path(project).resolve()
+    for key in PATH_KEYS:
+        value = tool_input.get(key)
+        if value is None:
+            continue
+        path = Path(str(value)).expanduser()
+        path = (path if path.is_absolute() else base / path).resolve()
+        if path != base and base not in path.parents:
+            return False
+    return True
 
 
 class ApprovalNotFound(KeyError):
@@ -39,11 +57,12 @@ class ApprovalBroker:
         self._ids = itertools.count(1)
         self._pending: dict[str, tuple[dict[str, Any], asyncio.Future]] = {}
 
-    def callback(self, session_id: str):
+    def callback(self, session_id: str, project: str | Path | None = None):
         async def can_use_tool(
             tool: str, tool_input: dict[str, Any], context: ToolPermissionContext
         ) -> PermissionResultAllow | PermissionResultDeny:
-            if tool in self.auto_allow:
+            # RULE: reading passes unasked only inside the session's own project
+            if tool in self.auto_allow and _inside(tool_input, project):
                 return PermissionResultAllow()
             return await self._ask(session_id, tool, tool_input, context)
 

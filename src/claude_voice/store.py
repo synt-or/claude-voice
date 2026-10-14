@@ -53,6 +53,9 @@ class Store:
             path = Path(path).expanduser()
         self.clock = clock
         self.db = sqlite3.connect(path, check_same_thread=False)
+        if str(path) != ":memory:":
+            # Prompts and events are kept in clear; only the owner may read them.
+            Path(path).chmod(0o600)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self._recover_interrupted()

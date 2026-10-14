@@ -23,6 +23,7 @@ from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
     RefreshToken,
+    RegistrationError,
     TokenError,
     construct_redirect_uri,
 )
@@ -38,6 +39,9 @@ REFRESH_TTL = 90 * 24 * 3600
 CODE_TTL = 300
 CONSENT_TTL = 600
 MAX_SECRET_ATTEMPTS = 5
+MAX_CLIENTS = 50
+MAX_CONSENTS = 20
+FRAME_HEADERS = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"}
 SCOPE = "claude"
 METADATA_PATH = "/.well-known/oauth-authorization-server"
 
@@ -52,7 +56,17 @@ CREATE TABLE IF NOT EXISTS oauth_tokens(
   expires_at REAL NOT NULL,
   family TEXT NOT NULL         -- tokens issued together are revoked together
 );
+CREATE TABLE IF NOT EXISTS oauth_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
+
+
+def revoke_all(db) -> int:
+    """Drop every token and client registration in a bridge database; returns the tokens dropped."""
+    db.executescript(SCHEMA)
+    with db:
+        n = db.execute("DELETE FROM oauth_tokens").rowcount
+        db.execute("DELETE FROM oauth_clients")
+    return n
 
 
 def _hash(token: str) -> str:
@@ -75,15 +89,36 @@ class OAuthProvider:
         public_url: str,
         clock: Callable[[], float] = time.time,
         static_token: str | None = None,
+        redirect_hosts: list[str] | None = None,
     ) -> None:
         self.db = store.db
         self.db.executescript(SCHEMA)
         self.login_secret = login_secret
+        self.redirect_hosts = redirect_hosts
         self.public_url = public_url.rstrip("/")
         self.clock = clock
         self.static_token = static_token
         self._consents: dict[str, _PendingConsent] = {}
         self._codes: dict[str, AuthorizationCode] = {}
+        self._forget_if_secret_changed()
+
+    def _forget_if_secret_changed(self) -> None:
+        # RULE: a new login secret signs everyone out
+        digest = _hash(self.login_secret)
+        row = self.db.execute("SELECT value FROM oauth_meta WHERE key='secret'").fetchone()
+        if row is not None and row[0] == digest:
+            return
+        with self.db:
+            if row is not None:
+                self.revoke_all()
+            self.db.execute("INSERT OR REPLACE INTO oauth_meta VALUES('secret', ?)", (digest,))
+
+    def revoke_all(self) -> int:
+        """Sign every client out: all tokens and registrations are dropped."""
+        n = revoke_all(self.db)
+        self._codes.clear()
+        self._consents.clear()
+        return n
 
     # -- clients -------------------------------------------------------------
 
@@ -92,6 +127,18 @@ class OAuthProvider:
         return OAuthClientInformationFull.model_validate_json(row[0]) if row else None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        if self.redirect_hosts is not None:
+            for uri in client_info.redirect_uris or []:
+                if (urlparse(str(uri)).hostname or "") not in self.redirect_hosts:
+                    raise RegistrationError("invalid_redirect_uri", f"redirect URI not allowed: {uri}")
+        (count,) = self.db.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()
+        if count >= MAX_CLIENTS:
+            # Clients that never got a token are dropped first, to make room.
+            with self.db:
+                self.db.execute("DELETE FROM oauth_clients WHERE client_id NOT IN (SELECT client_id FROM oauth_tokens)")
+            (count,) = self.db.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()
+            if count >= MAX_CLIENTS:
+                raise RegistrationError("invalid_client_metadata", "too many registered clients")
         with self.db:
             self.db.execute(
                 "INSERT OR REPLACE INTO oauth_clients VALUES(?,?)",
@@ -102,6 +149,9 @@ class OAuthProvider:
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         self._expire()
+        if len(self._consents) >= MAX_CONSENTS:
+            oldest = min(self._consents, key=lambda k: self._consents[k].expires_at)
+            del self._consents[oldest]
         request_id = secrets.token_urlsafe(24)
         self._consents[request_id] = _PendingConsent(client, params, self.clock() + CONSENT_TTL)
         return f"{self.public_url}/oauth/consent?request={request_id}"
@@ -117,8 +167,8 @@ class OAuthProvider:
         self._expire()
         pending = self._consents.get(request.query_params.get("request", ""))
         if pending is None:
-            return HTMLResponse(_page("This sign-in request has expired. Start again."), 400)
-        return HTMLResponse(_consent_form(request.query_params["request"], pending))
+            return HTMLResponse(_page("This sign-in request has expired. Start again."), 400, headers=FRAME_HEADERS)
+        return HTMLResponse(_consent_form(request.query_params["request"], pending), headers=FRAME_HEADERS)
 
     async def consent_submit(self, request: Request) -> Response:
         self._expire()
@@ -127,7 +177,7 @@ class OAuthProvider:
         pending = self._consents.get(request_id)
         if pending is None or pending.attempts >= MAX_SECRET_ATTEMPTS:
             self._consents.pop(request_id, None)
-            return HTMLResponse(_page("This sign-in request is no longer valid."), 400)
+            return HTMLResponse(_page("This sign-in request is no longer valid."), 400, headers=FRAME_HEADERS)
 
         params = pending.params
         if form.get("action") == "deny":
@@ -140,7 +190,11 @@ class OAuthProvider:
         if not hmac.compare_digest(str(form.get("secret", "")).encode(), self.login_secret.encode()):
             pending.attempts += 1
             left = MAX_SECRET_ATTEMPTS - pending.attempts
-            return HTMLResponse(_consent_form(request_id, pending, error=f"Wrong secret. {left} tries left."), 401)
+            return HTMLResponse(
+                _consent_form(request_id, pending, error=f"Wrong secret. {left} tries left."),
+                401,
+                headers=FRAME_HEADERS,
+            )
 
         del self._consents[request_id]
         code = secrets.token_urlsafe(32)

@@ -14,7 +14,7 @@ def env(tmp_path, **extra):
 
 
 def test_the_command_has_serve_and_check():
-    assert COMMANDS == ("serve", "check")
+    assert COMMANDS == ("serve", "check", "revoke-all")
 
 
 def test_serve_starts_the_bridge_with_the_chosen_transport(tmp_path):
@@ -95,3 +95,18 @@ def test_a_bad_configuration_is_one_line_and_exit_code_one(tmp_path, capsys):
     err = capsys.readouterr().err.strip()
     assert err.startswith("claude-voice: ANTHROPIC_API_KEY is set")
     assert "\n" not in err
+
+
+def test_revoke_all_signs_every_app_out(tmp_path, capsys):
+    import asyncio
+
+    from claude_voice.oauth import OAuthProvider
+    from claude_voice.store import Store
+
+    db = tmp_path / "bridge.db"
+    oauth = OAuthProvider(Store(db), login_secret="s" * 40, public_url="https://x")
+    tokens = asyncio.run(oauth.issue_tokens("c0", ["claude"], None))
+    assert main(["revoke-all"], env={"CLAUDE_VOICE_DB": str(db)}) == 0
+    assert "2 tokens revoked" in capsys.readouterr().out
+    fresh = OAuthProvider(Store(db), login_secret="s" * 40, public_url="https://x")
+    assert asyncio.run(fresh.load_access_token(tokens.access_token)) is None
